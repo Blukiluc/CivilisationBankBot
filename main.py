@@ -9,9 +9,9 @@ bot = interactions.Client(token=TOKEN)
 
 @bot.event()
 async def on_ready():
-    print("ready")
+    print("Bot online!")
 
-CATEGORY_NAME = "BANK"
+CATEGORY_NAME = "Banks"
 
 @interactions.slash_command(
     name="create",
@@ -24,11 +24,41 @@ async def create(ctx: interactions.SlashContext):
         custom_id="primary"
     )
     await ctx.send(
-        "Click the button to create your bank account 🏦",
+        "🏦 Click the button to create your bank account:",
         components=interactions.ActionRow(button),
     )
+    
 @interactions.component_callback("primary")
 async def primary_clicked(ctx: interactions.ComponentContext):
-    await ctx.send("working fine")
+    # Create new channel
+    server = ctx.guild
+    user = ctx.user
+    category=interactions.utils.get(server.channels, name=CATEGORY_NAME, type=interactions.ChannelType.GUILD_CATEGORY)
+    if category is None:
+        await ctx.send("Category not found. Please contact an admin.", ephemeral=True)
+        return
+    channel = await server.create_text_channel(name=f"{user.username}-bank", category=category)
+    await ctx.send(f"Bank created! <#{channel.id}>", ephemeral=True)
+
+    # Default message
+    buttonDeposit = interactions.Button(
+        style=interactions.ButtonStyle.GREEN,
+        label="Deposit",
+        custom_id="bank_deposit"
+    )
+    buttonWithdraw = interactions.Button(
+        style=interactions.ButtonStyle.RED,
+        label="Withdraw",
+        custom_id="bank_withdraw"
+    )
+    buttonLoan = interactions.Button(
+        style=interactions.ButtonStyle.GREY,
+        label="Manage loans",
+        custom_id="bank_loan"
+    )
+    await channel.send(
+        f"Welcome <@{user.id}>! Your bank account has been created.",
+        components=interactions.ActionRow(buttonDeposit, buttonWithdraw, buttonLoan)
+    )
 
 bot.start()
