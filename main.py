@@ -7,6 +7,8 @@ import os
 import aiosqlite
 import asyncio
 import aiohttp
+import json
+from datetime import datetime
 
 # ============================================================
 #                        CONFIG / INIT
@@ -24,6 +26,10 @@ bot = interactions.Client(
 )
 
 CATEGORY_NAME = "Banks"   # Category where bank channels are created
+TASK_CHANNEL_ID = 1451673541857644654  # Channel ID for posting tasks
+TASK_ADMIN_CHHANNEL_ID = 1453891133938733090  # Channel ID for admin task notifications
+JOB_CHANNEL_ID = 1453477151465799773   # Channel ID for posting jobs
+JOB_ADMIN_CHANNEL_ID = 1453891133938733090  # Channel ID for admin job notifications
 
 
 # ============================================================
@@ -55,8 +61,38 @@ async def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             sender_discord_id INTEGER NOT NULL,
             receiver_discord_id INTEGER NOT NULL,
+            is_task_reward INTEGER DEFAULT 0,
+            is_job_reward INTEGER DEFAULT 0,
             amount INTEGER NOT NULL,
             date DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        """)
+
+        # Task table
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            message_id INTEGER UNIQUE NOT NULL,
+            name TEXT NOT NULL,
+            description TEXT NOT NULL,
+            reward INTEGER NOT NULL,
+            author_discord_id INTEGER NOT NULL,
+            claimed_by_discord_ids TEXT DEFAULT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        """)
+
+        # Job table
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            message_id INTEGER UNIQUE NOT NULL,
+            name TEXT NOT NULL,
+            description TEXT NOT NULL,
+            reward INTEGER NOT NULL,
+            author_discord_id INTEGER NOT NULL,
+            claimed_by_discord_ids TEXT DEFAULT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
         """)
 
@@ -78,9 +114,20 @@ async def register_user_db(discord_id: int, discord_username: str, minecraft_use
         await db.commit()
 
 
-async def get_user(discord_id: int):
+async def get_user(discord_id: int = None, discord_username: str = None, minecraft_username: str = None, minecraft_uuid: str = None, bank_channel_id: int = None):
     async with aiosqlite.connect("bank.db") as db:
-        cursor = await db.execute("SELECT * FROM users WHERE discord_id = ?", (discord_id,))
+        if discord_id is not None:
+            cursor = await db.execute("SELECT * FROM users WHERE discord_id = ?", (discord_id,))
+        elif discord_username is not None:
+            cursor = await db.execute("SELECT * FROM users WHERE discord_username = ?", (discord_username,))
+        elif minecraft_username is not None:
+            cursor = await db.execute("SELECT * FROM users WHERE minecraft_username = ?", (minecraft_username,))
+        elif minecraft_uuid is not None:
+            cursor = await db.execute("SELECT * FROM users WHERE minecraft_uuid = ?", (minecraft_uuid,))
+        elif bank_channel_id is not None:
+            cursor = await db.execute("SELECT * FROM users WHERE bank_channel_id = ?", (bank_channel_id,))
+        else:
+            return None
         return await cursor.fetchone()
 
 
@@ -120,11 +167,83 @@ async def get_minecraft_uuid(minecraft_uuid: str):
         return await cursor.fetchone()
 
 
-async def log_transaction(sender_discord_id: int, receiver_discord_id: int, amount: int):
+async def log_transaction(sender_discord_id: int, receiver_discord_id: int, is_task_reward: int = 0, is_job_reward: int = 0, amount: int = 0):
     async with aiosqlite.connect("bank.db") as db:
         await db.execute(
-            "INSERT INTO transactions (sender_discord_id, receiver_discord_id, amount) VALUES (?, ?, ?)",
-            (sender_discord_id, receiver_discord_id, amount)
+            "INSERT INTO transactions (sender_discord_id, receiver_discord_id, is_task_reward, is_job_reward, amount) VALUES (?, ?, ?, ?, ?)",
+            (sender_discord_id, receiver_discord_id, is_task_reward, is_job_reward, amount)
+        )
+        await db.commit()
+
+
+async def create_task(message_id: int, name: str, description: str, reward: int, author_discord_id: int):
+    async with aiosqlite.connect("bank.db") as db:
+        await db.execute(
+            "INSERT INTO tasks (message_id, name, description, reward, author_discord_id) VALUES (?, ?, ?, ?, ?)",
+            (message_id, name, description, reward, author_discord_id)
+        )
+        await db.commit()
+
+
+async def get_task(message_id: int):
+    async with aiosqlite.connect("bank.db") as db:
+        cursor = await db.execute(
+            "SELECT * FROM tasks WHERE message_id = ?",
+            (message_id,)
+        )
+        return await cursor.fetchone()
+
+
+async def get_task_from_name(name: str):
+    async with aiosqlite.connect("bank.db") as db:
+        cursor = await db.execute(
+            "SELECT * FROM tasks WHERE name = ?",
+            (name,)
+        )
+        return await cursor.fetchone()
+
+
+async def change_task_claimed_by(message_id: int, claimed_by_discord_ids: str):
+    async with aiosqlite.connect("bank.db") as db:
+        await db.execute(
+            "UPDATE tasks SET claimed_by_discord_ids = ? WHERE message_id = ?",
+            (claimed_by_discord_ids, message_id)
+        )
+        await db.commit()
+
+
+async def create_job(message_id: int, name: str, description: str, reward: int, author_discord_id: int):
+    async with aiosqlite.connect("bank.db") as db:
+        await db.execute(
+            "INSERT INTO jobs (message_id, name, description, reward, author_discord_id) VALUES (?, ?, ?, ?, ?)",
+            (message_id, name, description, reward, author_discord_id)
+        )
+        await db.commit()
+
+
+async def get_job(message_id: int):
+    async with aiosqlite.connect("bank.db") as db:
+        cursor = await db.execute(
+            "SELECT * FROM jobs WHERE message_id = ?",
+            (message_id,)
+        )
+        return await cursor.fetchone()
+
+
+async def get_job_from_name(name: str):
+    async with aiosqlite.connect("bank.db") as db:
+        cursor = await db.execute(
+            "SELECT * FROM jobs WHERE name = ?",
+            (name,)
+        )
+        return await cursor.fetchone()
+
+
+async def change_job_claimed_by(message_id: int, claimed_by_discord_ids: str):
+    async with aiosqlite.connect("bank.db") as db:
+        await db.execute(
+            "UPDATE jobs SET claimed_by_discord_ids = ? WHERE message_id = ?",
+            (claimed_by_discord_ids, message_id)
         )
         await db.commit()
 
@@ -173,7 +292,10 @@ async def on_ready():
 #                        /LINK COMMAND
 # ============================================================
 
-@interactions.slash_command(name="link", description="Link your Minecraft account.")
+@interactions.slash_command(
+        name="link",
+        description="Link your Minecraft account."
+)
 async def link(ctx: interactions.SlashContext):
     """Opens a modal to link Minecraft account."""
     modal = Modal(
@@ -197,7 +319,7 @@ async def handle_modal(ctx: interactions.ModalContext):
     profile = await get_minecraft_profile(minecraft_username)
 
     # Error cases
-    if await get_user(discord_id) is not None:
+    if await get_user(discord_id=discord_id) is not None:
         return await ctx.send("❌ You already linked an account.", ephemeral=True)
 
     if not profile["exists"]:
@@ -232,7 +354,7 @@ async def create_bank_button_clicked(ctx: interactions.ComponentContext):
     if category is None:
         return await ctx.send("Category not found.", ephemeral=True)
 
-    user_db = await get_user(user.id)
+    user_db = await get_user(discord_id=user.id)
 
     if user_db is None:
         return await ctx.send("Link your account first using /link.", ephemeral=True)
@@ -263,7 +385,7 @@ async def create_bank_button_clicked(ctx: interactions.ComponentContext):
 
 @interactions.component_callback("bank_balance")
 async def bank_balance_clicked(ctx: interactions.ComponentContext):
-    user_db = await get_user(ctx.user.id)
+    user_db = await get_user(discord_id=ctx.user.id)
     if user_db is None:
         return await ctx.send("Error: Contact admin.", ephemeral=True)
 
@@ -292,7 +414,7 @@ async def handle_send_money_modal(ctx: interactions.ModalContext):
     minecraft_username = ctx.responses["username_recipient"].lower()
     amount = int(ctx.responses["amount"])
 
-    sender_db = await get_user(ctx.author.id)
+    sender_db = await get_user(discord_id=ctx.author.id)
     recipient_db = await get_minecraft_username(minecraft_username)
 
     # Error cases
@@ -314,7 +436,7 @@ async def handle_send_money_modal(ctx: interactions.ModalContext):
     # Transfer money
     await update_user_balance(ctx.author.id, sender_db[5] - amount)
     await update_user_balance(recipient_db[1], recipient_db[5] + amount)
-    await log_transaction(ctx.author.id, recipient_db[1], amount)
+    await log_transaction(ctx.author.id, recipient_db[1], 0, 0, amount)
 
     # Notify sender
     await ctx.send(f"✅ Sent {amount} credits to <@{recipient_db[1]}>.", ephemeral=True)
@@ -330,7 +452,10 @@ async def handle_send_money_modal(ctx: interactions.ModalContext):
 #                     MINECRAFT ↔ DISCORD LOOKUP
 # ============================================================
 
-@interactions.slash_command(name="minecraftname", description="Get Minecraft username from Discord user.")
+@interactions.slash_command(
+        name="minecraftname",
+        description="Get Minecraft username from Discord user."
+)
 @interactions.slash_option(
     name="user",
     description="Target user",
@@ -338,7 +463,7 @@ async def handle_send_money_modal(ctx: interactions.ModalContext):
     required=True
 )
 async def minecraft_name(ctx: interactions.SlashContext, user: interactions.User):
-    user_db = await get_user(user.id)
+    user_db = await get_user(discord_id=user.id)
     if user_db is None:
         return await ctx.send("User not found.", ephemeral=True)
 
@@ -346,7 +471,10 @@ async def minecraft_name(ctx: interactions.SlashContext, user: interactions.User
     await ctx.send(f"Minecraft username: **{profile['username']}**", ephemeral=True)
 
 
-@interactions.slash_command(name="discordname", description="Get Discord user from Minecraft username.")
+@interactions.slash_command(
+        name="discordname",
+        description="Get Discord user from Minecraft username."
+)
 @interactions.slash_option(
     name="minecraft_username",
     description="Minecraft username",
@@ -365,7 +493,11 @@ async def discord_name(ctx: interactions.SlashContext, minecraft_username: str):
 #                        ADMIN COMMANDS
 # ============================================================
 
-@interactions.slash_command(name="admin", description="Admin controls")
+@interactions.slash_command(
+    name="admin",
+    description="Admin controls",
+    default_member_permissions=interactions.Permissions.ADMINISTRATOR
+)
 async def admin(ctx: interactions.SlashContext):
     """Shows admin buttons."""
     btn_link = Button(style=ButtonStyle.GREEN, label="Link admin", custom_id="link_admin_button")
@@ -400,7 +532,7 @@ async def create_bank_button_admin(ctx: interactions.ComponentContext):
 @interactions.component_callback("link_admin_button")
 async def link_admin(ctx: interactions.ComponentContext):
     """Links an admin account without Mojang check."""
-    if await get_user(ctx.author.id):
+    if await get_user(discord_id=ctx.author.id):
         return await ctx.send("❌ Already linked.", ephemeral=True)
 
     await register_user_db(ctx.author.id, ctx.author.username, ctx.author.username, ctx.author.id)
@@ -455,7 +587,7 @@ async def on_message_create(event: interactions.events.MessageCreate):
     target_id = int(parts[0])
     amount = int(parts[1])
 
-    target_db = await get_user(target_id)
+    target_db = await get_user(discord_id=target_id)
 
     if target_db is None:
         user_waiting_reply[msg.author.id] = [False, None]
@@ -465,6 +597,284 @@ async def on_message_create(event: interactions.events.MessageCreate):
     await msg.channel.send(f"Balance updated: **{amount}** for **{target_db[2]}**.", ephemeral=True)
 
     user_waiting_reply[msg.author.id] = [False, None]
+
+
+# ===========================================================
+#                         TASK SYSTEM
+# ===========================================================
+
+# ---------- Create task command ----------
+@interactions.slash_command(
+    name="task",
+    description="Task system",
+    default_member_permissions=interactions.Permissions.ADMINISTRATOR
+)
+async def task(ctx: interactions.SlashContext):
+    """Base command placeholder"""
+    pass
+
+@task.subcommand(
+    sub_cmd_name="create",
+    sub_cmd_description="Create a new task"
+)
+@interactions.slash_option(
+    name="name",
+    description="Task name",
+    opt_type=interactions.OptionType.STRING,
+    required=True
+)
+@interactions.slash_option(
+    name="description",
+    description="Task description",
+    opt_type=interactions.OptionType.STRING,
+    required=True
+)
+@interactions.slash_option(
+    name="reward",
+    description="Reward in Social Credits",
+    opt_type=interactions.OptionType.INTEGER,
+    required=True
+)
+async def task_create(ctx: interactions.SlashContext, name: str, description: str, reward: int):
+    """"Creates a new task and posts it in the task channel."""
+
+    embed = interactions.Embed(
+        title=name,
+        description=(
+            f"## {description}\n"
+            f"### 💰 **Reward:** {reward} Social Credits"
+        ),
+        color=0xFF5500
+    )
+    
+    button = interactions.Button(
+        style=interactions.ButtonStyle.PRIMARY,
+        label="Claim task",
+        custom_id="claim_task_button"
+    )
+
+    channel = await ctx.client.fetch_channel(TASK_CHANNEL_ID)
+    message = await channel.send(
+        embeds=embed,
+        components=button
+    )
+
+    await create_task(message.id, name, description, reward, ctx.author.id)
+    await ctx.send("Task created successfully.", ephemeral=True)
+
+# ---------- Claim task ----------
+@interactions.component_callback("claim_task_button")
+async def claim_task_callback(ctx: interactions.ComponentContext):
+    """Triggered when someone claims the task."""
+
+    author_db = await get_user(discord_id=ctx.author.id)
+    if author_db is None:
+        return await ctx.send("❌ Link your account first using /link.", ephemeral=True)
+    if author_db[6] == 0:
+        return await ctx.send("❌ You need a bank account to claim tasks.", ephemeral=True)
+    
+    task_db = await get_task(ctx.message.id)
+    if task_db is None:
+        return await ctx.send("❌ Task not found.", ephemeral=True)
+
+    raw_claimed_by = task_db[6]
+    if raw_claimed_by:
+        claimed_by = json.loads(raw_claimed_by)
+    else:
+        claimed_by = {}
+    if str(ctx.author.id) in claimed_by:
+            return await ctx.send("❌ You have already claimed this task.", ephemeral=True)
+
+    claimed_by[str(ctx.author.id)] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    await change_task_claimed_by(ctx.message.id, json.dumps(claimed_by))
+
+    minecraft_username = (await get_minecraft_profile(author_db[3]))['username']
+    await bot.get_channel(TASK_ADMIN_CHHANNEL_ID).send(f"📝 The task **{task_db[2]}** has been claimed by {ctx.author.mention} ({minecraft_username})")
+
+    await ctx.send("✅ You claimed the task!", ephemeral=True)
+
+# ---------- Accept task ----------
+@task.subcommand(
+    sub_cmd_name="accept",
+    sub_cmd_description="Accept a claimed job"
+)
+@interactions.slash_option(
+    name="task",
+    description="Task name",
+    opt_type=interactions.OptionType.STRING,
+    required=True
+)
+@interactions.slash_option(
+    name="claimer",
+    description="Minecraft username who claimed the task",
+    opt_type=interactions.OptionType.STRING,
+    required=True
+)
+async def job_accept(ctx: interactions.SlashContext, task: str, claimer: str):
+    """Accepts a claimed task."""
+    
+    task_db = await get_task_from_name(task)
+    if task_db is None:
+        return await ctx.send("❌ Task not found.", ephemeral=True)
+    
+    claimer_db = await get_user(minecraft_username=claimer.lower())
+    if claimer_db is None:
+        return await ctx.send("❌ Claimer not found.", ephemeral=True)
+    if claimer_db[6] == 0:
+        return await ctx.send("❌ Claimer has no bank account.", ephemeral=True)
+    
+    raw_claimed_by = task_db[6]
+    if raw_claimed_by:
+        claimed_by = json.loads(raw_claimed_by)
+    else:
+        claimed_by = {}
+    if str(claimer_db[1]) not in claimed_by:
+        return await ctx.send("❌ This task was not claimed by that user.", ephemeral=True)
+
+    reward = task_db[4]
+    claimer_balance = claimer_db[5]
+    await update_user_balance(claimer_db[1], claimer_balance + reward)
+    await log_transaction(0, claimer_db[1], 0, 1, reward)
+    await ctx.send(f"✅ Task accepted. {reward} credits sent to {claimer_db[2]}.", ephemeral=True)
+
+    
+# ============================================================
+#                          JOB SYSTEM
+# ============================================================
+
+# ---------- Create job command ----------
+@interactions.slash_command(
+    name="job",
+    description="Job system",
+    default_member_permissions=interactions.Permissions.ADMINISTRATOR
+)
+async def job(ctx: interactions.SlashContext):
+    """Job system placeholder."""
+    pass
+
+@job.subcommand(
+    sub_cmd_name="create",
+    sub_cmd_description="Create a new job"
+)
+@interactions.slash_option(
+    name="name",
+    description="Job name",
+    opt_type=interactions.OptionType.STRING,
+    required=True
+)
+@interactions.slash_option(
+    name="description",
+    description="Job description",
+    opt_type=interactions.OptionType.STRING,
+    required=True
+)
+@interactions.slash_option(
+    name="reward",
+    description="Reward in Social Credits",
+    opt_type=interactions.OptionType.INTEGER,
+    required=True
+)
+async def job_create(ctx: interactions.SlashContext, name: str, description: str, reward: int):
+    """Creates a new job (functionality to be implemented)."""
+
+    embed = interactions.Embed(
+        title=name,
+        description=(
+            f"## {description}\n"
+            f"### 💰 **Reward:** {reward} Social Credits"
+        ),
+        color=0xFF5500
+    )
+
+    button = interactions.Button(
+        style=interactions.ButtonStyle.PRIMARY,
+        label="Claim job",
+        custom_id="claim_job_button"
+    )
+
+    channel = await ctx.client.fetch_channel(JOB_CHANNEL_ID)
+    message = await channel.send(
+        embeds=embed,
+        components=button
+    )
+
+    await create_job(message.id, name, description, reward, ctx.author.id)
+    await ctx.send("Job created successfully.", ephemeral=True)
+
+# ---------- Claim job ----------
+@interactions.component_callback("claim_job_button")
+async def claim_job_callback(ctx: interactions.ComponentContext):
+    """Triggered when someone claims the job."""
+
+    author_db = await get_user(discord_id=ctx.author.id)
+    if author_db is None:
+        return await ctx.send("❌ Link your account first using /link.", ephemeral=True)
+    if author_db[6] == 0:
+        return await ctx.send("❌ You need a bank account to claim jobs.", ephemeral=True)
+    
+    job_db = await get_job(ctx.message.id)
+    if job_db is None:
+        return await ctx.send("❌ Job not found.", ephemeral=True)
+
+    raw_claimed_by = job_db[6]
+    if raw_claimed_by:
+        claimed_by = json.loads(raw_claimed_by)
+    else:
+        claimed_by = {}
+    if str(ctx.author.id) in claimed_by:
+            return await ctx.send("❌ You have already claimed this job.", ephemeral=True)
+
+    claimed_by[str(ctx.author.id)] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    await change_job_claimed_by(ctx.message.id, json.dumps(claimed_by))
+
+    minecraft_username = (await get_minecraft_profile(author_db[3]))['username']
+    await bot.get_channel(JOB_ADMIN_CHANNEL_ID).send(f"📝 The job **{job_db[2]}** has been claimed by {ctx.author.mention} ({minecraft_username})")
+
+    await ctx.send("✅ You claimed the job!", ephemeral=True)
+
+# ---------- Accept job ----------
+@job.subcommand(
+    sub_cmd_name="accept",
+    sub_cmd_description="Accept a claimed job"
+)
+@interactions.slash_option(
+    name="job",
+    description="Job name",
+    opt_type=interactions.OptionType.STRING,
+    required=True
+)
+@interactions.slash_option(
+    name="claimer",
+    description="Minecraft username who claimed the job",
+    opt_type=interactions.OptionType.STRING,
+    required=True
+)
+async def job_accept(ctx: interactions.SlashContext, job: str, claimer: str):
+    """Accepts a claimed job."""
+    
+    job_db = await get_job_from_name(job)
+    if job_db is None:
+        return await ctx.send("❌ Job not found.", ephemeral=True)
+    
+    claimer_db = await get_user(minecraft_username=claimer.lower())
+    if claimer_db is None:
+        return await ctx.send("❌ Claimer not found.", ephemeral=True)
+    if claimer_db[6] == 0:
+        return await ctx.send("❌ Claimer has no bank account.", ephemeral=True)
+    
+    raw_claimed_by = job_db[6]
+    if raw_claimed_by:
+        claimed_by = json.loads(raw_claimed_by)
+    else:
+        claimed_by = {}
+    if str(claimer_db[1]) not in claimed_by:
+        return await ctx.send("❌ This job was not claimed by that user.", ephemeral=True)
+    
+    reward = job_db[4]
+    claimer_balance = claimer_db[5]
+    await update_user_balance(claimer_db[1], claimer_balance + reward)
+    await log_transaction(0, claimer_db[1], 0, 1, reward)
+    await ctx.send(f"✅ Job accepted. {reward} credits sent to {claimer_db[2]}.", ephemeral=True)
 
 
 # ============================================================
