@@ -1,14 +1,19 @@
+import os
+import json
+import asyncio
+from datetime import datetime
+from dotenv import load_dotenv
+import aiosqlite
+import aiohttp
 import interactions
 from interactions import (
-    Button, ButtonStyle, ActionRow, modal_callback, Modal, ShortText
+    Button,
+    ButtonStyle,
+    ActionRow,
+    modal_callback,
+    Modal,
+    ShortText
 )
-from dotenv import load_dotenv
-import os
-import aiosqlite
-import asyncio
-import aiohttp
-import json
-from datetime import datetime
 
 # ============================================================
 #                        CONFIG / INIT
@@ -16,20 +21,14 @@ from datetime import datetime
 
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
+BOT_ID = 1450840919615078440
 
-# Initialize bot
 bot = interactions.Client(
     token=TOKEN,
     sync_commands=True,
     default_scope=int(os.getenv("GUILD_ID")),
     intents=interactions.Intents.ALL
 )
-
-CATEGORY_NAME = "Banks"   # Category where bank channels are created
-TASK_CHANNEL_ID = 1451673541857644654  # Channel ID for posting tasks
-TASK_ADMIN_CHHANNEL_ID = 1453891133938733090  # Channel ID for admin task notifications
-JOB_CHANNEL_ID = 1453477151465799773   # Channel ID for posting jobs
-JOB_ADMIN_CHANNEL_ID = 1453891133938733090  # Channel ID for admin job notifications
 
 
 # ============================================================
@@ -96,6 +95,18 @@ async def init_db():
         );
         """)
 
+        # Config table
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS config (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            category_id INTEGERs,
+            task_channel_id INTEGER,
+            task_admin_channel_id INTEGER,
+            job_channel_id INTEGER,
+            job_admin_channel_id INTEGER
+        );
+        """)
+
         await db.commit()
 
     print("Database initialized.")
@@ -117,15 +128,20 @@ async def register_user_db(discord_id: int, discord_username: str, minecraft_use
 async def get_user(discord_id: int = None, discord_username: str = None, minecraft_username: str = None, minecraft_uuid: str = None, bank_channel_id: int = None):
     async with aiosqlite.connect("bank.db") as db:
         if discord_id is not None:
-            cursor = await db.execute("SELECT * FROM users WHERE discord_id = ?", (discord_id,))
+            cursor = await db.execute("SELECT * FROM users WHERE discord_id = ?",
+            (discord_id,))
         elif discord_username is not None:
-            cursor = await db.execute("SELECT * FROM users WHERE discord_username = ?", (discord_username,))
+            cursor = await db.execute("SELECT * FROM users WHERE discord_username = ?",
+            (discord_username,))
         elif minecraft_username is not None:
-            cursor = await db.execute("SELECT * FROM users WHERE minecraft_username = ?", (minecraft_username,))
+            cursor = await db.execute("SELECT * FROM users WHERE minecraft_username = ?",
+            (minecraft_username,))
         elif minecraft_uuid is not None:
-            cursor = await db.execute("SELECT * FROM users WHERE minecraft_uuid = ?", (minecraft_uuid,))
+            cursor = await db.execute("SELECT * FROM users WHERE minecraft_uuid = ?",
+            (minecraft_uuid,))
         elif bank_channel_id is not None:
-            cursor = await db.execute("SELECT * FROM users WHERE bank_channel_id = ?", (bank_channel_id,))
+            cursor = await db.execute("SELECT * FROM users WHERE bank_channel_id = ?",
+            (bank_channel_id,))
         else:
             return None
         return await cursor.fetchone()
@@ -248,6 +264,57 @@ async def change_job_claimed_by(message_id: int, claimed_by_discord_ids: str):
         await db.commit()
 
 
+async def change_config(category_id: int = None, task_channel_id: int = None, task_admin_channel_id: int = None, job_channel_id: int = None, job_admin_channel_id: int = None):
+    async with aiosqlite.connect("bank.db") as db:
+        if category_id is not None:
+            await db.execute(
+                "UPDATE config SET category_id = ? WHERE id = 1",
+                (category_id,)
+            )
+        if task_channel_id is not None:
+            await db.execute(
+                "UPDATE config SET task_channel_id = ? WHERE id = 1",
+                (task_channel_id,)
+            )
+        if task_admin_channel_id is not None:
+            await db.execute(
+                "UPDATE config SET task_admin_channel_id = ? WHERE id = 1",
+                (task_admin_channel_id,)
+            )
+        if job_channel_id is not None:
+            await db.execute(
+                "UPDATE config SET job_channel_id = ? WHERE id = 1",
+                (job_channel_id,)
+            )
+        if job_admin_channel_id is not None:
+            await db.execute(
+                "UPDATE config SET job_admin_channel_id = ? WHERE id = 1",
+                (job_admin_channel_id,)
+            )
+        await db.commit()
+
+
+async def get_config():
+    async with aiosqlite.connect("bank.db") as db:
+        cursor = await db.execute(
+            "SELECT * FROM config WHERE id = 1"
+        )
+        return await cursor.fetchone()
+
+
+# ============================================================
+#                        CONSTANTS
+# ============================================================
+
+config = asyncio.run(get_config()) if asyncio.run(get_config()) is not None else (1, 0, 0, 0, 0, 0)
+
+CATEGORY_ID = config[1]
+TASK_CHANNEL_ID = config[2]
+TASK_ADMIN_CHHANNEL_ID = config[3]
+JOB_CHANNEL_ID = config[4]
+JOB_ADMIN_CHANNEL_ID = config[5]
+
+
 # ============================================================
 #                     MOJANG API CHECK
 # ============================================================
@@ -350,7 +417,7 @@ async def create_bank_button_clicked(ctx: interactions.ComponentContext):
     user = ctx.user
 
     # Check if category exists
-    category = interactions.utils.get(server.channels, name=CATEGORY_NAME, type=interactions.ChannelType.GUILD_CATEGORY)
+    category = interactions.utils.get(server.channels, id=CATEGORY_ID, type=interactions.ChannelType.GUILD_CATEGORY)
     if category is None:
         return await ctx.send("Category not found.", ephemeral=True)
 
@@ -363,7 +430,35 @@ async def create_bank_button_clicked(ctx: interactions.ComponentContext):
         return await ctx.send(f"You already have a bank: <#{user_db[7]}>", ephemeral=True)
 
     # Create private bank channel
-    channel = await server.create_text_channel(name=f"{user.username}-bank", category=category)
+    channel = await server.create_text_channel(
+        name=f"{user.username}-bank",
+        category=category,
+        permission_overwrites=[
+            interactions.PermissionOverwrite(
+                id=server.default_role.id,
+                type=interactions.OverwriteType.ROLE,
+                deny=interactions.Permissions.VIEW_CHANNEL,
+            ),
+            interactions.PermissionOverwrite(
+                id=user.id,
+                type=interactions.OverwriteType.MEMBER,
+                allow=(
+                    interactions.Permissions.VIEW_CHANNEL
+                    | interactions.Permissions.SEND_MESSAGES
+                    | interactions.Permissions.READ_MESSAGE_HISTORY
+                ),
+            ),
+            interactions.PermissionOverwrite(
+                id=BOT_ID,
+                type=interactions.OverwriteType.MEMBER,
+                allow=(
+                    interactions.Permissions.VIEW_CHANNEL
+                    | interactions.Permissions.SEND_MESSAGES
+                    | interactions.Permissions.READ_MESSAGE_HISTORY
+                ),
+            ),
+        ],
+    )
     await update_user_bank(user.id, channel.id)
 
     await ctx.send(f"Bank created! <#{channel.id}>", ephemeral=True)
@@ -489,121 +584,10 @@ async def discord_name(ctx: interactions.SlashContext, minecraft_username: str):
     await ctx.send(f"Discord user: <@{user_db[1]}>", ephemeral=True)
 
 
-# ============================================================
-#                        ADMIN COMMANDS
-# ============================================================
-
-@interactions.slash_command(
-    name="admin",
-    description="Admin controls",
-    default_member_permissions=interactions.Permissions.ADMINISTRATOR
-)
-async def admin(ctx: interactions.SlashContext):
-    """Shows admin buttons."""
-    btn_link = Button(style=ButtonStyle.GREEN, label="Link admin", custom_id="link_admin_button")
-    btn_set = Button(style=ButtonStyle.RED, label="Set money", custom_id="set_money_button")
-    btn_create = Button(style=ButtonStyle.PRIMARY, label="Create Bank button", custom_id="create_bank_button_admin")
-    btn_config = Button(style=ButtonStyle.GRAY, label="Config", custom_id="config_button_admin")
-
-    await ctx.send(
-        "Admin commands:",
-        components=ActionRow(btn_link, btn_set, btn_create, btn_config),
-        ephemeral=True
-    )
-
-
-@interactions.component_callback("create_bank_button_admin")
-async def create_bank_button_admin(ctx: interactions.ComponentContext):
-    """Posts the 'Create account' button."""
-    await ctx.defer(ephemeral=True)
-
-    button = Button(
-        style=ButtonStyle.PRIMARY,
-        label="Create an account",
-        custom_id="create_bank_button"
-    )
-
-    await ctx.channel.send(
-        "🏦 Click the button to create your bank account:",
-        components=ActionRow(button)
-    )
-
-
-@interactions.component_callback("link_admin_button")
-async def link_admin(ctx: interactions.ComponentContext):
-    """Links an admin account without Mojang check."""
-    if await get_user(discord_id=ctx.author.id):
-        return await ctx.send("❌ Already linked.", ephemeral=True)
-
-    await register_user_db(ctx.author.id, ctx.author.username, ctx.author.username, ctx.author.id)
-    await ctx.send("✅ Linked as admin.", ephemeral=True)
-
-
-# ============================================================
-#                        SET MONEY SYSTEM
-# ============================================================
-
-user_waiting_reply = {}   # {discord_id: [waiting_bool, channel_id]}
-
-
-@interactions.component_callback("set_money_button")
-async def set_money(ctx: interactions.ComponentContext):
-    """Admin begins manual input process."""
-    user_waiting_reply[ctx.author.id] = [True, ctx.channel.id]
-    await ctx.channel.send(
-        "Send: `<DiscordID> <Amount>`\nType `Cancel` to stop.",
-        ephemeral=True
-    )
-
-
-@interactions.listen()
-async def on_message_create(event: interactions.events.MessageCreate):
-    """Handles admin manual money input."""
-    msg = event.message
-    global user_waiting_reply
-
-    if msg.author.bot:
-        return
-
-    # If the user is not in the waiting list → ignore
-    if not user_waiting_reply.get(msg.author.id, [False])[0]:
-        return
-
-    # Check correct channel
-    if msg.channel.id != user_waiting_reply[msg.author.id][1]:
-        return
-
-    # Cancel operation
-    if msg.content.lower() == "cancel":
-        user_waiting_reply[msg.author.id] = [False, None]
-        return await msg.channel.send("Operation cancelled.", ephemeral=True)
-
-    # Validate format
-    parts = msg.content.split(" ")
-    if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
-        user_waiting_reply[msg.author.id] = [False, None]
-        return await msg.channel.send("Invalid format. Cancelled.", ephemeral=True)
-
-    target_id = int(parts[0])
-    amount = int(parts[1])
-
-    target_db = await get_user(discord_id=target_id)
-
-    if target_db is None:
-        user_waiting_reply[msg.author.id] = [False, None]
-        return await msg.channel.send("User not found.", ephemeral=True)
-
-    await update_user_balance(target_id, amount)
-    await msg.channel.send(f"Balance updated: **{amount}** for **{target_db[2]}**.", ephemeral=True)
-
-    user_waiting_reply[msg.author.id] = [False, None]
-
-
 # ===========================================================
 #                         TASK SYSTEM
 # ===========================================================
 
-# ---------- Create task command ----------
 @interactions.slash_command(
     name="task",
     description="Task system",
@@ -662,7 +646,6 @@ async def task_create(ctx: interactions.SlashContext, name: str, description: st
     await create_task(message.id, name, description, reward, ctx.author.id)
     await ctx.send("Task created successfully.", ephemeral=True)
 
-# ---------- Claim task ----------
 @interactions.component_callback("claim_task_button")
 async def claim_task_callback(ctx: interactions.ComponentContext):
     """Triggered when someone claims the task."""
@@ -693,7 +676,6 @@ async def claim_task_callback(ctx: interactions.ComponentContext):
 
     await ctx.send("✅ You claimed the task!", ephemeral=True)
 
-# ---------- Accept task ----------
 @task.subcommand(
     sub_cmd_name="accept",
     sub_cmd_description="Accept a claimed job"
@@ -742,7 +724,6 @@ async def job_accept(ctx: interactions.SlashContext, task: str, claimer: str):
 #                          JOB SYSTEM
 # ============================================================
 
-# ---------- Create job command ----------
 @interactions.slash_command(
     name="job",
     description="Job system",
@@ -801,7 +782,6 @@ async def job_create(ctx: interactions.SlashContext, name: str, description: str
     await create_job(message.id, name, description, reward, ctx.author.id)
     await ctx.send("Job created successfully.", ephemeral=True)
 
-# ---------- Claim job ----------
 @interactions.component_callback("claim_job_button")
 async def claim_job_callback(ctx: interactions.ComponentContext):
     """Triggered when someone claims the job."""
@@ -832,7 +812,6 @@ async def claim_job_callback(ctx: interactions.ComponentContext):
 
     await ctx.send("✅ You claimed the job!", ephemeral=True)
 
-# ---------- Accept job ----------
 @job.subcommand(
     sub_cmd_name="accept",
     sub_cmd_description="Accept a claimed job"
@@ -875,6 +854,206 @@ async def job_accept(ctx: interactions.SlashContext, job: str, claimer: str):
     await update_user_balance(claimer_db[1], claimer_balance + reward)
     await log_transaction(0, claimer_db[1], 0, 1, reward)
     await ctx.send(f"✅ Job accepted. {reward} credits sent to {claimer_db[2]}.", ephemeral=True)
+
+
+# ============================================================
+#                        ADMIN COMMANDS
+# ============================================================
+
+@interactions.slash_command(
+    name="admin",
+    description="Admin controls",
+    default_member_permissions=interactions.Permissions.ADMINISTRATOR
+)
+async def admin(ctx: interactions.SlashContext):
+    """Shows admin buttons."""
+    btn_link = Button(style=ButtonStyle.GREEN, label="Link admin", custom_id="link_admin_button")
+    btn_set = Button(style=ButtonStyle.RED, label="Set money", custom_id="set_money_button")
+    btn_create = Button(style=ButtonStyle.PRIMARY, label="Create Bank button", custom_id="create_bank_button_admin")
+    # btn_config = Button(style=ButtonStyle.GRAY, label="Config", custom_id="config_button_admin")
+
+    await ctx.send(
+        "Admin commands:",
+        # components=ActionRow(btn_link, btn_set, btn_create, btn_config),
+        components=ActionRow(btn_link, btn_set, btn_create),
+        ephemeral=True
+    )
+
+
+@interactions.component_callback("create_bank_button_admin")
+async def create_bank_button_admin(ctx: interactions.ComponentContext):
+    """Posts the 'Create account' button."""
+    await ctx.defer(ephemeral=True)
+
+    button = Button(
+        style=ButtonStyle.PRIMARY,
+        label="Create an account",
+        custom_id="create_bank_button"
+    )
+
+    await ctx.channel.send(
+        "🏦 Click the button to create your bank account:",
+        components=ActionRow(button)
+    )
+
+
+@interactions.component_callback("link_admin_button")
+async def link_admin(ctx: interactions.ComponentContext):
+    """Links an admin account without Mojang check."""
+    if await get_user(discord_id=ctx.author.id):
+        return await ctx.send("❌ Already linked.", ephemeral=True)
+
+    await register_user_db(ctx.author.id, ctx.author.username, ctx.author.username, ctx.author.id)
+    await ctx.send("✅ Linked as admin.", ephemeral=True)
+
+
+# ============================================================
+#                 SET MONEY SYSTEM (ADMIN)
+# ============================================================
+
+user_waiting_reply = {}   # {discord_id: [waiting_bool, channel_id]}
+
+
+@interactions.component_callback("set_money_button")
+async def set_money(ctx: interactions.ComponentContext):
+    """Admin begins manual input process."""
+    user_waiting_reply[ctx.author.id] = [True, ctx.channel.id]
+    await ctx.channel.send(
+        "Send: `<DiscordID> <Amount>`\nType `Cancel` to stop.",
+        ephemeral=True
+    )
+
+
+@interactions.listen()
+async def on_message_create(event: interactions.events.MessageCreate):
+    """Handles admin manual money input."""
+    msg = event.message
+    global user_waiting_reply
+
+    if msg.author.bot:
+        return
+
+    # If the user is not in the waiting list → ignore
+    if not user_waiting_reply.get(msg.author.id, [False])[0]:
+        return
+
+    # Check correct channel
+    if msg.channel.id != user_waiting_reply[msg.author.id][1]:
+        return
+
+    # Cancel operation
+    if msg.content.lower() == "cancel":
+        user_waiting_reply[msg.author.id] = [False, None]
+        return await msg.channel.send("Operation cancelled.", ephemeral=True)
+
+    # Validate format
+    parts = msg.content.split(" ")
+    if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
+        user_waiting_reply[msg.author.id] = [False, None]
+        return await msg.channel.send("Invalid format. Cancelled.", ephemeral=True)
+
+    target_id = int(parts[0])
+    amount = int(parts[1])
+
+    target_db = await get_user(discord_id=target_id)
+
+    if target_db is None:
+        user_waiting_reply[msg.author.id] = [False, None]
+        return await msg.channel.send("User not found.", ephemeral=True)
+
+    await update_user_balance(target_id, amount)
+    await msg.channel.send(f"Balance updated: **{amount}** for **{target_db[2]}**.", ephemeral=True)
+
+    user_waiting_reply[msg.author.id] = [False, None]
+
+
+# ============================================================
+#                            CONFIG
+# ============================================================
+
+@interactions.slash_command(
+    name="config",
+    description="Bot configuration",
+    default_member_permissions=interactions.Permissions.ADMINISTRATOR
+)
+async def config(ctx: interactions.SlashContext):
+    """Job system placeholder."""
+    pass
+
+@config.subcommand(
+    sub_cmd_name="set-bank-category",
+    sub_cmd_description="Set the bank category ID"
+)
+@interactions.slash_option(
+    name="category_id",
+    description="Bank category ID",
+    opt_type=interactions.OptionType.INTEGER,
+    required=True
+)
+async def set_bank_category(ctx: interactions.SlashContext, category_id: int):
+    """Set the bank category ID."""
+    await change_config(bank_category_id=category_id)
+    await ctx.send("Bank category set.", ephemeral=True)
+
+@config.subcommand(
+    sub_cmd_name="set-task-channel",
+    sub_cmd_description="Set the task channel ID"
+)
+@interactions.slash_option(
+    name="channel_id",
+    description="Task channel ID",
+    opt_type=interactions.OptionType.INTEGER,
+    required=True
+)
+async def set_task_channel(ctx: interactions.SlashContext, channel_id: int):
+    """Set the task channel ID."""
+    await change_config(task_channel_id=channel_id)
+    await ctx.send("Task channel set.", ephemeral=True)
+
+@config.subcommand(
+    sub_cmd_name="set-task-admin-channel",
+    sub_cmd_description="Set the task admin channel ID"
+)
+@interactions.slash_option(
+    name="channel_id",
+    description="Task admin channel ID",
+    opt_type=interactions.OptionType.INTEGER,
+    required=True
+)
+async def set_task_admin_channel(ctx: interactions.SlashContext, channel_id: int):
+    """Set the task admin channel ID."""
+    await change_config(task_admin_channel_id=channel_id)
+    await ctx.send("Task admin channel set.", ephemeral=True)
+
+@config.subcommand(
+    sub_cmd_name="set-job-channel",
+    sub_cmd_description="Set the job channel ID"
+)
+@interactions.slash_option(
+    name="channel_id",
+    description="Job channel ID",
+    opt_type=interactions.OptionType.INTEGER,
+    required=True
+)
+async def set_job_channel(ctx: interactions.SlashContext, channel_id: int):
+    """Set the job channel ID."""
+    await change_config(job_channel_id=channel_id)
+    await ctx.send("Job channel set.", ephemeral=True)
+
+@config.subcommand(
+    sub_cmd_name="set-job-admin-channel",
+    sub_cmd_description="Set the job admin channel ID"
+)
+@interactions.slash_option(
+    name="channel_id",
+    description="Job admin channel ID",
+    opt_type=interactions.OptionType.INTEGER,
+    required=True
+)
+async def set_job_admin_channel(ctx: interactions.SlashContext, channel_id: int):
+    """Set the job admin channel ID."""
+    await change_config(job_admin_channel_id=channel_id)
+    await ctx.send("Job admin channel set.", ephemeral=True)
 
 
 # ============================================================
