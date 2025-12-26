@@ -26,9 +26,15 @@ BOT_ID = 1450840919615078440
 bot = interactions.Client(
     token=TOKEN,
     sync_commands=True,
-    default_scope=int(os.getenv("GUILD_ID")),
+    # default_scope=int(os.getenv("GUILD_ID")),
     intents=interactions.Intents.ALL
 )
+
+CATEGORY_ID = None
+TASK_CHANNEL_ID = None
+TASK_ADMIN_CHANNEL_ID = None
+JOB_CHANNEL_ID = None
+JOB_ADMIN_CHANNEL_ID = None
 
 
 # ============================================================
@@ -99,11 +105,11 @@ async def init_db():
         await db.execute("""
         CREATE TABLE IF NOT EXISTS config (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            category_id INTEGERs,
-            task_channel_id INTEGER,
-            task_admin_channel_id INTEGER,
-            job_channel_id INTEGER,
-            job_admin_channel_id INTEGER
+            category_id STRING,
+            task_channel_id STRING,
+            task_admin_channel_id STRING,
+            job_channel_id STRING,
+            job_admin_channel_id STRING
         );
         """)
 
@@ -264,55 +270,40 @@ async def change_job_claimed_by(message_id: int, claimed_by_discord_ids: str):
         await db.commit()
 
 
-async def change_config(category_id: int = None, task_channel_id: int = None, task_admin_channel_id: int = None, job_channel_id: int = None, job_admin_channel_id: int = None):
+async def change_config(bank_category_id: str = None, task_channel_id: str = None, task_admin_channel_id: str = None, job_channel_id: str = None, job_admin_channel_id: str = None):
+    global CATEGORY_ID, TASK_CHANNEL_ID, TASK_ADMIN_CHHANNEL_ID, JOB_CHANNEL_ID, JOB_ADMIN_CHANNEL_ID
     async with aiosqlite.connect("bank.db") as db:
-        if category_id is not None:
+        if bank_category_id is not None:
             await db.execute(
                 "UPDATE config SET category_id = ? WHERE id = 1",
-                (category_id,)
+                (bank_category_id,)
             )
+            CATEGORY_ID = int(bank_category_id)
         if task_channel_id is not None:
             await db.execute(
                 "UPDATE config SET task_channel_id = ? WHERE id = 1",
                 (task_channel_id,)
             )
+            TASK_CHANNEL_ID = int(task_channel_id)
         if task_admin_channel_id is not None:
             await db.execute(
                 "UPDATE config SET task_admin_channel_id = ? WHERE id = 1",
                 (task_admin_channel_id,)
             )
+            TASK_ADMIN_CHHANNEL_ID = int(task_admin_channel_id)
         if job_channel_id is not None:
             await db.execute(
                 "UPDATE config SET job_channel_id = ? WHERE id = 1",
                 (job_channel_id,)
             )
+            JOB_CHANNEL_ID = int(job_channel_id)
         if job_admin_channel_id is not None:
             await db.execute(
                 "UPDATE config SET job_admin_channel_id = ? WHERE id = 1",
                 (job_admin_channel_id,)
             )
+            JOB_ADMIN_CHANNEL_ID = int(job_admin_channel_id)
         await db.commit()
-
-
-async def get_config():
-    async with aiosqlite.connect("bank.db") as db:
-        cursor = await db.execute(
-            "SELECT * FROM config WHERE id = 1"
-        )
-        return await cursor.fetchone()
-
-
-# ============================================================
-#                        CONSTANTS
-# ============================================================
-
-config = asyncio.run(get_config()) if asyncio.run(get_config()) is not None else (1, 0, 0, 0, 0, 0)
-
-CATEGORY_ID = config[1]
-TASK_CHANNEL_ID = config[2]
-TASK_ADMIN_CHHANNEL_ID = config[3]
-JOB_CHANNEL_ID = config[4]
-JOB_ADMIN_CHANNEL_ID = config[5]
 
 
 # ============================================================
@@ -346,13 +337,15 @@ async def get_minecraft_profile(username: str):
 
 
 # ============================================================
-#                           EVENTS
+#                   ON READY & CONSTANTS
 # ============================================================
 
 @bot.event()
 async def on_ready():
-    print("Bot online!")
     await bot.synchronise_interactions()
+    print("Bot online!")
+    for guild in bot.guilds:
+        print(f"Connected to guild: {guild.name} (ID: {guild.id})")
 
 
 # ============================================================
@@ -470,7 +463,7 @@ async def create_bank_button_clicked(ctx: interactions.ComponentContext):
 
     await channel.send(
         f"Welcome <@{user.id}>! Your bank account is now active.",
-        components=ActionRow(balance_btn, send_btn, logs_btn)
+        components=ActionRow(balance_btn, send_btn) # logs_btn (to be implemented)
     )
 
 
@@ -987,7 +980,7 @@ async def config(ctx: interactions.SlashContext):
 @interactions.slash_option(
     name="category_id",
     description="Bank category ID",
-    opt_type=interactions.OptionType.INTEGER,
+    opt_type=interactions.OptionType.STRING,
     required=True
 )
 async def set_bank_category(ctx: interactions.SlashContext, category_id: int):
@@ -1002,7 +995,7 @@ async def set_bank_category(ctx: interactions.SlashContext, category_id: int):
 @interactions.slash_option(
     name="channel_id",
     description="Task channel ID",
-    opt_type=interactions.OptionType.INTEGER,
+    opt_type=interactions.OptionType.STRING,
     required=True
 )
 async def set_task_channel(ctx: interactions.SlashContext, channel_id: int):
@@ -1017,7 +1010,7 @@ async def set_task_channel(ctx: interactions.SlashContext, channel_id: int):
 @interactions.slash_option(
     name="channel_id",
     description="Task admin channel ID",
-    opt_type=interactions.OptionType.INTEGER,
+    opt_type=interactions.OptionType.STRING,
     required=True
 )
 async def set_task_admin_channel(ctx: interactions.SlashContext, channel_id: int):
@@ -1032,7 +1025,7 @@ async def set_task_admin_channel(ctx: interactions.SlashContext, channel_id: int
 @interactions.slash_option(
     name="channel_id",
     description="Job channel ID",
-    opt_type=interactions.OptionType.INTEGER,
+    opt_type=interactions.OptionType.STRING,
     required=True
 )
 async def set_job_channel(ctx: interactions.SlashContext, channel_id: int):
@@ -1047,7 +1040,7 @@ async def set_job_channel(ctx: interactions.SlashContext, channel_id: int):
 @interactions.slash_option(
     name="channel_id",
     description="Job admin channel ID",
-    opt_type=interactions.OptionType.INTEGER,
+    opt_type=interactions.OptionType.STRING,
     required=True
 )
 async def set_job_admin_channel(ctx: interactions.SlashContext, channel_id: int):
